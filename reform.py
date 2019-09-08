@@ -6,7 +6,6 @@ import scipy.stats
 np.set_printoptions(threshold=3)
 np.set_printoptions(suppress=True)
 import cv2
-import threading
 
 
 x_range = np.array([0, 800])
@@ -38,9 +37,8 @@ WINDOW_NAME = "Particle Filter"
 
 sensor_std_err = 5
 
-# 设置一个互斥锁用于锁定landmarks
-mutex = threading.Lock()
-
+# 将预测坐标用全局变量形式给出，画图处理如同center
+prediction = np.array([-10, -10])
 
 def drawLines(img, points, r, g, b):
     cv2.polylines(img, [np.int32(points)], isClosed=False, color=(r, g, b))
@@ -57,6 +55,14 @@ def drawCross(img, center, r, g, b):
     ctry = center[0, 1]
     cv2.line(img, (ctrx - d, ctry - d), (ctrx + d, ctry + d), color, t, LINE_AA)
     cv2.line(img, (ctrx + d, ctry - d), (ctrx - d, ctry + d), color, t, LINE_AA)
+
+
+def drawPrediction(img, prediction, r, g, b):
+    R = 15  # 圆圈半径
+    t = 2  # 线宽
+    color = (b, g, r)
+    cv2.circle(img, tuple((int(prediction[0]), int(prediction[1]))), R, color, t)
+
 
 
 def mouseCallback(event, x, y, flags, null):
@@ -84,13 +90,16 @@ def mouseCallback(event, x, y, flags, null):
         u = np.array([heading, distance])
         predict(particles, u, std, dt=1.)
 
-        mutex.acquire()  # 对landmark进行操作要上互斥锁
         zs = (np.linalg.norm(landmarks - center, axis=1) + (np.random.randn(NL) * sensor_std_err))
-        update(particles, weights, z=zs, R=50, landmarks=landmarks)
-        mutex.release()  # 解锁
+        # update(particles, weights, z=zs, R=50, landmarks=landmarks)
+        update_by_poisson(particles, weights, z=zs, landmarks=landmarks)
 
         indexes = systematic_resample(weights)
         resample_from_index(particles, weights, indexes)
+
+        # 计算权值更新后的预测位置
+        global prediction
+        prediction, var = estimate(particles, weights)
 
     previous_x = x
     previous_y = y
@@ -123,6 +132,17 @@ def update(particles, weights, z, R, landmarks):
     weights /= sum(weights)
 
 
+# 使用泊松分布计算更新权重
+def update_by_poisson(particles, weights, z, landmarks):
+    weights.fill(1.)
+    for i, landmark in enumerate(landmarks):
+        distance = np.power((particles[:, 0] - landmark[0]) ** 2 + (particles[:, 1] - landmark[1]) ** 2, 0.5)
+        weights *= scipy.stats.poisson.pmf(z[i], 50, distance)
+
+    weights += 1.e-300
+    weights /= sum(weights)
+
+
 # 为避免粒子数越来越少要对粒子进行重采样，这里采用的是低方差非独立随机重采样
 def systematic_resample(weights):
     N = len(weights)
@@ -147,21 +167,17 @@ def resample_from_index(particles, weights, indexes):
     weights /= np.sum(weights)
 
 
-# 更新landmarks坐标，使用定时任务，2s变换一次
-def move_landMarks():
-    mutex.acquire()
-    print("moving landmarks~~~~~~")
-    for i in range(landmarks.shape[0]):
-        landmarks[i][0] = (landmarks[i][0] + 5) % 800  # 限制在横向空间
-        landmarks[i][1] = (landmarks[i][1] + 5) % 600  # 限制在纵向空间
-    mutex.release()
-    timer = threading.Timer(2, move_landMarks)
-    timer.start()
+# 估计系统现在的状态值，对每个粒子的位置算加权平均可以得到当前机器人的预测位置
+def estimate(particles, weights):
+    pos = particles[:, 0:2]
+    mean = np.average(pos, weights=weights, axis=0)  # 位置的均值
+    var = np.average((pos - mean) ** 2, weights=weights, axis=0)  # 方差？
+    return mean, var
+
 
 
 if __name__ == '__main__':
 
-    move_landMarks()  # 设置定时任务
 
     particles = create_uniform_particles(x_range, y_range, N)
     # Create a black image, a window and bind the function to window
@@ -175,6 +191,8 @@ if __name__ == '__main__':
         img = np.zeros((HEIGHT, WIDTH, 3), np.uint8)
         drawLines(img, trajectory, 0, 255, 0)
         drawCross(img, center, r=255, g=0, b=0)
+        drawPrediction(img, prediction, r=255, g=255, b=0)
+        # cv2.circle(img, tuple((int(prediction[0, 0]), int(prediction[0, 1]))), 15, (0, 255, 255), 3)
 
         # landmarks
         for landmark in landmarks:

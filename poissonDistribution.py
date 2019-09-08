@@ -6,7 +6,6 @@ import scipy.stats
 np.set_printoptions(threshold=3)
 np.set_printoptions(suppress=True)
 import cv2
-import threading
 
 
 x_range = np.array([0, 800])
@@ -38,8 +37,6 @@ WINDOW_NAME = "Particle Filter"
 
 sensor_std_err = 5
 
-# 设置一个互斥锁用于锁定landmarks
-mutex = threading.Lock()
 
 
 def drawLines(img, points, r, g, b):
@@ -47,9 +44,8 @@ def drawLines(img, points, r, g, b):
 
 
 def drawCross(img, center, r, g, b):
-    # 为避免粒子集合把真实坐标覆盖掉，线的长度和宽度适当调大一点
-    d = 15
-    t = 3
+    d = 5
+    t = 2
     # cv2版本3以上使用LINE_AA属性
     LINE_AA = cv2.LINE_AA if cv2.__version__[0] >= '3' else cv2.CV_AA
     color = (b, g, r)  # cv2的颜色参数是BGR模式？？？
@@ -84,10 +80,8 @@ def mouseCallback(event, x, y, flags, null):
         u = np.array([heading, distance])
         predict(particles, u, std, dt=1.)
 
-        mutex.acquire()  # 对landmark进行操作要上互斥锁
         zs = (np.linalg.norm(landmarks - center, axis=1) + (np.random.randn(NL) * sensor_std_err))
-        update(particles, weights, z=zs, R=50, landmarks=landmarks)
-        mutex.release()  # 解锁
+        update_by_poisson(particles, weights, z=zs, landmarks=landmarks)
 
         indexes = systematic_resample(weights)
         resample_from_index(particles, weights, indexes)
@@ -112,14 +106,14 @@ def predict(particles, u, std, dt=1.):
     particles[:, 1] += np.sin(u[0]) * dist
 
 
-# 根据测量值z、粒子当前状态更新每个粒子的权重
-def update(particles, weights, z, R, landmarks):
+# 使用泊松分布计算更新权重
+def update_by_poisson(particles, weights, z, landmarks):
     weights.fill(1.)
     for i, landmark in enumerate(landmarks):
-        distance = np.power((particles[:, 0] - landmark[0]) ** 2 + (particles[:, 1] - landmark[1]) ** 2, 0.5)   # 欧氏距离,2范数
-        weights *= scipy.stats.norm(distance, R).pdf(z[i])  # scipy.stats.norm().pdf()用于预测概率
+        distance = np.power((particles[:, 0] - landmark[0]) ** 2 + (particles[:, 1] - landmark[1]) ** 2, 0.5)
+        weights *= scipy.stats.poisson.pmf(z[i], 50, distance)
 
-    weights += 1.e-300  # avoid round-off to zero
+    weights += 1.e-300
     weights /= sum(weights)
 
 
@@ -147,21 +141,9 @@ def resample_from_index(particles, weights, indexes):
     weights /= np.sum(weights)
 
 
-# 更新landmarks坐标，使用定时任务，2s变换一次
-def move_landMarks():
-    mutex.acquire()
-    print("moving landmarks~~~~~~")
-    for i in range(landmarks.shape[0]):
-        landmarks[i][0] = (landmarks[i][0] + 5) % 800  # 限制在横向空间
-        landmarks[i][1] = (landmarks[i][1] + 5) % 600  # 限制在纵向空间
-    mutex.release()
-    timer = threading.Timer(2, move_landMarks)
-    timer.start()
 
 
 if __name__ == '__main__':
-
-    move_landMarks()  # 设置定时任务
 
     particles = create_uniform_particles(x_range, y_range, N)
     # Create a black image, a window and bind the function to window
