@@ -99,7 +99,6 @@ def mouseCallback(event, x, y, flags, null):
         # 计算权值更新后的预测位置
         global prediction
         prediction, var = estimate(particles, weights)
-        # print(prediction,'\t', prediction[0], '\t', prediction[1])
 
     previous_x = x
     previous_y = y
@@ -181,7 +180,6 @@ if __name__ == '__main__':
         drawLines(img, trajectory, 0, 255, 0)
         drawCross(img, center, r=255, g=0, b=0)
         drawPrediction(img, prediction, r=255, g=255, b=0)
-        # cv2.circle(img, tuple((int(prediction[0, 0]), int(prediction[0, 1]))), 15, (0, 255, 255), 3)
 
         # landmarks
         for landmark in landmarks:
@@ -201,7 +199,7 @@ if __name__ == '__main__':
         cv2.putText(img, "Robot Trajectory(Ground truth)", (30, 60), 1, 1.0, (0, 255, 0))
 
         drawLines(img, np.array([[10, 55], [25, 55]]), 0, 255, 0)
-        # 给真实位置、预测位置做一个标注
+        # 预测位置做一个标注
         cv2.circle(img, (10, 80), 10, (0, 255, 255), 2)
         cv2.putText(img, "Prediction", (30, 85), 1, 1.0, (0, 255, 255))
 
